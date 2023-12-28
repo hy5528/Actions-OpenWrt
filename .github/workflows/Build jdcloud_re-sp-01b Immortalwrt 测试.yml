@@ -136,38 +136,11 @@ jobs:
         echo ====================================
 
     - name: Download Packages
-      id: download
+      id: package
       run: |
         cd openwrt
         make defconfig
-
-        # 分析配置文件是否包含补丁
-        subset_check=$(comm -23 <(sed '/# -/d' .config.old | sort | uniq) <(sort .config | uniq) | tee .notfound)
-        if [[ -z $subset_check ]]; then
-          echo "自定义配置(${{ inputs.config_tag }})是 .conifg 的子集"
-        else
-          echo "自定义配置(${{ inputs.config_tag }})不是 .conifg 的子集！以下配置行未在 .config 中找到"
-          cat .notfound
-          echo "=====================EOF======================="
-          echo "::warning title=Config fault::Custom config is not a subset of .config, please check..."
-        fi
-
-        # 从DIY_P2_SH中截取型号信息
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "::notice title=Target Name in .config:: $(cat DEVICE_NAME)" && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo =============current .config DIFF default config=============
-        ./scripts/diffconfig.sh
-        echo ===========================EoDIFF============================
-
-        # 下载包，如若出错生成警告
-        # 一轮八线程
-        make download -j8 | tee make_download.log
-        grep 'ERROR:' make_download.log | xargs -i echo "::warning:: [Download Trial 1]" {}
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
-        # 二轮单线程
-        grep 'ERROR:' -q -m1 make_download.log && make download -j1 V=s | tee make_download.log
-        grep 'ERROR:' make_download.log | xargs -i echo "::warning:: [Download Trial 2]" {}
+        make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
