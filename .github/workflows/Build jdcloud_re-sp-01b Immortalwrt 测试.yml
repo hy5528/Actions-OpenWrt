@@ -8,7 +8,8 @@
 # Description: Build OpenWrt using GitHub Actions
 #
 
-name: Build jdcloud_re-sp-01b Immortalwrt 
+name: Build Image
+run-name: Build Image [${{ inputs.config_tag }}, No.${{ inputs.device_choice }}, @${{ inputs.commit_sha }}]
 
 on:
   repository_dispatch:
@@ -20,85 +21,157 @@ on:
         default: 'false'
 
 env:
-  REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-23.05
+  # REPO_URL: https://github.com/openwrt/openwrt
+  # REPO_BRANCH: master
   FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: config/jdcloud_re-sp-01b
+  CONFIG_FILE: .config
+  COMMIT_SHA: ${{ inputs.commit_sha }}
   DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy/jdcloud_re-sp-01b.sh
-  UPLOAD_BIN_DIR: false
+  # DIY_P2_SH: diy-part2/[OpenWrt]RE-SP-01B-part2.sh
+  UPLOAD_BIN_DIR: true
   UPLOAD_FIRMWARE: true
-  UPLOAD_COWTRANSFER: false
-  UPLOAD_WETRANSFER: false
+  UPLOAD_TRANSFER: true
   UPLOAD_RELEASE: false
   TZ: Asia/Shanghai
 
 jobs:
-  build:
-    runs-on: ubuntu-20.04
-
+  init:
+    runs-on: ubuntu-22.04
+    outputs:
+      DEVICE_TAG: ${{steps.job_tag.outputs.DEVICE_TAG}}
     steps:
-    - name: Checkout
-      uses: actions/checkout@main
+    - uses: actions/checkout@main
+    
+    - name: Load environment variable
+      run: |
+        chmod +x $GITHUB_WORKSPACE/device-env.sh
+        $GITHUB_WORKSPACE/device-env.sh ${{ inputs.device_choice }}
+        
+    - id: job_tag
+      run: |
+        # notifications
+        # echo "::set-output name=DEVICE_TAG::${DEVICE_TAG}"
+        echo "DEVICE_TAG=${DEVICE_TAG}" >> $GITHUB_OUTPUT
+        echo "::notice title=Task Summary::Compile using the ${{ inputs.config_tag }}.config of device No.${{ inputs.device_choice }}(${DEVICE_TAG})"
+       
+        # 若指定了 commit 提个醒
+        if [ "$USE_COMMIT_SHA" == "latest" ]; then
+          LATEST_SHA=$(curl "https://api.github.com/repos/$REPO_USE/commits/$REPO_BRANCH" | grep sha | head -n1 | cut -d\" -f4)
+          echo "::notice title=Using commit::[latest] https://github.com/$REPO_USE/tree/$LATEST_SHA"
+        else
+          echo "::notice title=Using commit::[specific] https://github.com/$REPO_USE/tree/$USE_COMMIT_SHA"
+        fi
 
-    - name: Initialization environment
+  build:
+    runs-on: ubuntu-22.04
+    needs: init
+    name: ${{needs.init.outputs.DEVICE_TAG}}
+    steps:
+    - uses: actions/checkout@main
+
+    - name: Load Environment Variable
+      run: |
+        chmod +x $GITHUB_WORKSPACE/device-env.sh
+        $GITHUB_WORKSPACE/device-env.sh ${{ inputs.device_choice }}
+
+    - name: Initialize Environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL git.io/depends-ubuntu-2004)
+        sudo -E apt-get -qq install $DEPENDS 
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
+        # docker image prune -a -f
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
-       
-    - name: Clone source code
+
+    - name: Clone Source Code
       working-directory: /workdir
       run: |
-        df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        df -hT | tee /workdir/df.before
+
+        git clone https://github.com/$REPO_USE -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom feeds
+        # 若指定了 commit
+        if [ "$USE_COMMIT_SHA" != "latest" ]; then
+          cd openwrt
+          git checkout "$USE_COMMIT_SHA"
+          cd ..
+        fi
+
+    - name: Cache
+      uses: klever1988/cachewrtbuild@main
+      if: ${{ inputs.use_cache }}
+      with:
+        ccache: 'false'
+        prefix: ${{ github.workspace }}/openwrt
+        
+    - name: Load Custom Feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    - name: Update feeds
+    - name: Update Feeds
       run: cd openwrt && ./scripts/feeds update -a
 
-    - name: Install feeds
+    - name: Install Feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Load custom configuration
+    - name: Load Custom Configuration
       run: |
-        [ -e files ] && mv files openwrt/files
+        [ -e files ] && echo '::notice title=Image Type:: 已启用files大法！' && mv -v files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
+        chmod +x "$DIY_P2_SH"
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
+        # 使用脚本生成配置
+        "$GITHUB_WORKSPACE/$DIY_P2_SH" ${{ inputs.config_tag }}
+        echo ==============.config===============
+        [ -e .config ] && cat .config || (echo '.config NOT FOUND!' && exit 1)
+        echo ====================================
 
-    - name: SSH connection to Actions
-      uses: P3TERX/ssh2actions@v1.0.0
-      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
-      env:
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-
-    - name: Download package
-      id: package
+    - name: Download Packages
+      id: download
       run: |
         cd openwrt
         make defconfig
-        make download -j8
+
+        # 分析配置文件是否包含补丁
+        subset_check=$(comm -23 <(sed '/# -/d' .config.old | sort | uniq) <(sort .config | uniq) | tee .notfound)
+        if [[ -z $subset_check ]]; then
+          echo "自定义配置(${{ inputs.config_tag }})是 .conifg 的子集"
+        else
+          echo "自定义配置(${{ inputs.config_tag }})不是 .conifg 的子集！以下配置行未在 .config 中找到"
+          cat .notfound
+          echo "=====================EOF======================="
+          echo "::warning title=Config fault::Custom config is not a subset of .config, please check..."
+        fi
+
+        # 从DIY_P2_SH中截取型号信息
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "::notice title=Target Name in .config:: $(cat DEVICE_NAME)" && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo =============current .config DIFF default config=============
+        ./scripts/diffconfig.sh
+        echo ===========================EoDIFF============================
+
+        # 下载包，如若出错生成警告
+        # 一轮八线程
+        make download -j8 | tee make_download.log
+        grep 'ERROR:' make_download.log | xargs -i echo "::warning:: [Download Trial 1]" {}
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+        # 二轮单线程
+        grep 'ERROR:' -q -m1 make_download.log && make download -j1 V=s | tee make_download.log
+        grep 'ERROR:' make_download.log | xargs -i echo "::warning:: [Download Trial 2]" {}
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-     - name: SSH Before Compile
+    - name: SSH Before Compile
       uses: mxschmitt/action-tmate@v3
       with:
         limit-access-to-actor: false
