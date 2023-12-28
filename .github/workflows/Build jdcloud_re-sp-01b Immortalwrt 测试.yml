@@ -21,16 +21,16 @@ on:
         default: 'false'
 
 env:
-  # REPO_URL: https://github.com/openwrt/openwrt
-  # REPO_BRANCH: master
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-23.05
   FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: .config
-  COMMIT_SHA: ${{ inputs.commit_sha }}
+  CONFIG_FILE: config/jdcloud_re-sp-01b
   DIY_P1_SH: diy-part1.sh
-  # DIY_P2_SH: diy-part2/[OpenWrt]RE-SP-01B-part2.sh
-  UPLOAD_BIN_DIR: true
+  DIY_P2_SH: diy/jdcloud_re-sp-01b.sh
+  UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
-  UPLOAD_TRANSFER: true
+  UPLOAD_COWTRANSFER: false
+  UPLOAD_WETRANSFER: false
   UPLOAD_RELEASE: false
   TZ: Asia/Shanghai
 
