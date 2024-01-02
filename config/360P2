@@ -1,4 +1,4 @@
-#Newifi3 openwrt 配置文件
+#360P2配置文件
 #机型设置
 CONFIG_TARGET_ramips=y
 CONFIG_TARGET_ramips_mt76x8=y
